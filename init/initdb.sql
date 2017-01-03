@@ -1,23 +1,20 @@
 --
--- Copyright (C) 2015 Glyptodon LLC
+-- Licensed to the Apache Software Foundation (ASF) under one
+-- or more contributor license agreements.  See the NOTICE file
+-- distributed with this work for additional information
+-- regarding copyright ownership.  The ASF licenses this file
+-- to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance
+-- with the License.  You may obtain a copy of the License at
 --
--- Permission is hereby granted, free of charge, to any person obtaining a copy
--- of this software and associated documentation files (the "Software"), to deal
--- in the Software without restriction, including without limitation the rights
--- to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
--- copies of the Software, and to permit persons to whom the Software is
--- furnished to do so, subject to the following conditions:
+--   http://www.apache.org/licenses/LICENSE-2.0
 --
--- The above copyright notice and this permission notice shall be included in
--- all copies or substantial portions of the Software.
---
--- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
--- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
--- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
--- AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
--- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
--- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
--- THE SOFTWARE.
+-- Unless required by applicable law or agreed to in writing,
+-- software distributed under the License is distributed on an
+-- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+-- KIND, either express or implied.  See the License for the
+-- specific language governing permissions and limitations
+-- under the License.
 --
 
 --
@@ -47,6 +44,7 @@ CREATE TYPE guacamole_object_permission_type AS ENUM(
 CREATE TYPE guacamole_system_permission_type AS ENUM(
     'CREATE_CONNECTION',
     'CREATE_CONNECTION_GROUP',
+    'CREATE_SHARING_PROFILE',
     'CREATE_USER',
     'ADMINISTER'
 );
@@ -66,6 +64,7 @@ CREATE TABLE guacamole_connection_group (
   -- Concurrency limits
   max_connections          integer,
   max_connections_per_user integer,
+  enable_session_affinity  boolean NOT NULL DEFAULT FALSE,
 
   PRIMARY KEY (connection_group_id),
 
@@ -151,6 +150,34 @@ CREATE TABLE guacamole_user (
 );
 
 --
+-- Table of sharing profiles. Each sharing profile has a name, associated set
+-- of parameters, and a primary connection. The primary connection is the
+-- connection that the sharing profile shares, and the parameters dictate the
+-- restrictions/features which apply to the user joining the connection via the
+-- sharing profile.
+--
+
+CREATE TABLE guacamole_sharing_profile (
+
+  sharing_profile_id    serial       NOT NULL,
+  sharing_profile_name  varchar(128) NOT NULL,
+  primary_connection_id integer      NOT NULL,
+
+  PRIMARY KEY (sharing_profile_id),
+
+  CONSTRAINT sharing_profile_name_primary
+    UNIQUE (sharing_profile_name, primary_connection_id),
+
+  CONSTRAINT guacamole_sharing_profile_ibfk_1
+    FOREIGN KEY (primary_connection_id)
+    REFERENCES guacamole_connection (connection_id)
+    ON DELETE CASCADE
+
+);
+
+CREATE INDEX ON guacamole_sharing_profile(primary_connection_id);
+
+--
 -- Table of connection parameters. Each parameter is simply a name/value pair
 -- associated with a connection.
 --
@@ -170,6 +197,29 @@ CREATE TABLE guacamole_connection_parameter (
 );
 
 CREATE INDEX ON guacamole_connection_parameter(connection_id);
+
+--
+-- Table of sharing profile parameters. Each parameter is simply
+-- name/value pair associated with a sharing profile. These parameters dictate
+-- the restrictions/features which apply to the user joining the associated
+-- connection via the sharing profile.
+--
+
+CREATE TABLE guacamole_sharing_profile_parameter (
+
+  sharing_profile_id integer       NOT NULL,
+  parameter_name     varchar(128)  NOT NULL,
+  parameter_value    varchar(4096) NOT NULL,
+
+  PRIMARY KEY (sharing_profile_id, parameter_name),
+
+  CONSTRAINT guacamole_sharing_profile_parameter_ibfk_1
+    FOREIGN KEY (sharing_profile_id)
+    REFERENCES guacamole_sharing_profile (sharing_profile_id) ON DELETE CASCADE
+
+);
+
+CREATE INDEX ON guacamole_sharing_profile_parameter(sharing_profile_id);
 
 --
 -- Table of connection permissions. Each connection permission grants a user
@@ -222,6 +272,32 @@ CREATE TABLE guacamole_connection_group_permission (
 
 CREATE INDEX ON guacamole_connection_group_permission(connection_group_id);
 CREATE INDEX ON guacamole_connection_group_permission(user_id);
+
+--
+-- Table of sharing profile permissions. Each sharing profile permission grants
+-- a user specific access to a sharing profile.
+--
+
+CREATE TABLE guacamole_sharing_profile_permission (
+
+  user_id            integer NOT NULL,
+  sharing_profile_id integer NOT NULL,
+  permission         guacamole_object_permission_type NOT NULL,
+
+  PRIMARY KEY (user_id,sharing_profile_id,permission),
+
+  CONSTRAINT guacamole_sharing_profile_permission_ibfk_1
+    FOREIGN KEY (sharing_profile_id)
+    REFERENCES guacamole_sharing_profile (sharing_profile_id) ON DELETE CASCADE,
+
+  CONSTRAINT guacamole_sharing_profile_permission_ibfk_2
+    FOREIGN KEY (user_id)
+    REFERENCES guacamole_user (user_id) ON DELETE CASCADE
+
+);
+
+CREATE INDEX ON guacamole_sharing_profile_permission(sharing_profile_id);
+CREATE INDEX ON guacamole_sharing_profile_permission(user_id);
 
 --
 -- Table of system permissions. Each system permission grants a user a
@@ -277,48 +353,54 @@ CREATE INDEX ON guacamole_user_permission(user_id);
 
 CREATE TABLE guacamole_connection_history (
 
-  history_id    serial      NOT NULL,
-  user_id       integer     NOT NULL,
-  connection_id integer     NOT NULL,
-  start_date    timestamptz NOT NULL,
-  end_date      timestamptz DEFAULT NULL,
+  history_id           serial       NOT NULL,
+  user_id              integer      DEFAULT NULL,
+  username             varchar(128) NOT NULL,
+  connection_id        integer      DEFAULT NULL,
+  connection_name      varchar(128) NOT NULL,
+  sharing_profile_id   integer      DEFAULT NULL,
+  sharing_profile_name varchar(128) DEFAULT NULL,
+  start_date           timestamptz  NOT NULL,
+  end_date             timestamptz  DEFAULT NULL,
 
   PRIMARY KEY (history_id),
 
   CONSTRAINT guacamole_connection_history_ibfk_1
     FOREIGN KEY (user_id)
-    REFERENCES guacamole_user (user_id) ON DELETE CASCADE,
+    REFERENCES guacamole_user (user_id) ON DELETE SET NULL,
 
   CONSTRAINT guacamole_connection_history_ibfk_2
     FOREIGN KEY (connection_id)
-    REFERENCES guacamole_connection (connection_id) ON DELETE CASCADE
+    REFERENCES guacamole_connection (connection_id) ON DELETE SET NULL,
+
+  CONSTRAINT guacamole_connection_history_ibfk_3
+    FOREIGN KEY (sharing_profile_id)
+    REFERENCES guacamole_sharing_profile (sharing_profile_id) ON DELETE SET NULL
 
 );
 
 CREATE INDEX ON guacamole_connection_history(user_id);
 CREATE INDEX ON guacamole_connection_history(connection_id);
+CREATE INDEX ON guacamole_connection_history(sharing_profile_id);
 CREATE INDEX ON guacamole_connection_history(start_date);
 CREATE INDEX ON guacamole_connection_history(end_date);
 --
--- Copyright (C) 2015 Glyptodon LLC
+-- Licensed to the Apache Software Foundation (ASF) under one
+-- or more contributor license agreements.  See the NOTICE file
+-- distributed with this work for additional information
+-- regarding copyright ownership.  The ASF licenses this file
+-- to you under the Apache License, Version 2.0 (the
+-- "License"); you may not use this file except in compliance
+-- with the License.  You may obtain a copy of the License at
 --
--- Permission is hereby granted, free of charge, to any person obtaining a copy
--- of this software and associated documentation files (the "Software"), to deal
--- in the Software without restriction, including without limitation the rights
--- to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
--- copies of the Software, and to permit persons to whom the Software is
--- furnished to do so, subject to the following conditions:
+--   http://www.apache.org/licenses/LICENSE-2.0
 --
--- The above copyright notice and this permission notice shall be included in
--- all copies or substantial portions of the Software.
---
--- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
--- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
--- FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
--- AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
--- LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
--- OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
--- THE SOFTWARE.
+-- Unless required by applicable law or agreed to in writing,
+-- software distributed under the License is distributed on an
+-- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+-- KIND, either express or implied.  See the License for the
+-- specific language governing permissions and limitations
+-- under the License.
 --
 
 
@@ -335,6 +417,7 @@ FROM (
     VALUES
         ('guacadmin', 'CREATE_CONNECTION'),
         ('guacadmin', 'CREATE_CONNECTION_GROUP'),
+        ('guacadmin', 'CREATE_SHARING_PROFILE'),
         ('guacadmin', 'CREATE_USER'),
         ('guacadmin', 'ADMINISTER')
 ) permissions (username, permission)
