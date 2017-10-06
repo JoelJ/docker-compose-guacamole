@@ -6,7 +6,7 @@ services:
     restart: always
     volumes:
       - ./init:/docker-entrypoint-initdb.d
-      - data:/var/lib/postgres/data
+      - data:/var/lib/postgressql/data
     environment:
       POSTGRES_USER: guacamole_user
       POSTGRES_PASSWORD: some_password
@@ -14,12 +14,12 @@ services:
     networks:
       - guac
   guacd:
-    image: glyptodon/guacd
+    image: guacamole/guacd:0.9.13-incubating
     restart: always
     networks:
       - guac
   guac:
-    image: glyptodon/guacamole
+    image: guacamole/guacamole:0.9.13-incubating
     restart: always
     ports:
       - "8080:8080"
@@ -28,8 +28,8 @@ services:
       POSTGRES_DATABASE: guacamole_db
       POSTGRES_USER: guacamole_user
       POSTGRES_PASSWORD: some_password
-      GUACD_PORT_4822_TCP_ADDR: guacd
-      GUACD_PORT_4822_TCP_PORT: 4822
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: 4822
     networks:
       - guac
     depends_on:
