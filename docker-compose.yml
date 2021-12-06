@@ -2,7 +2,7 @@ version: '2'
 
 services:
   postgres:
-    image: postgres
+    image: postgres:13
     restart: always
     volumes:
       - ./init:/docker-entrypoint-initdb.d
@@ -14,12 +14,14 @@ services:
     networks:
       - guac
   guacd:
-    image: guacamole/guacd:0.9.13-incubating
+    image: guacamole/guacd:1.3.0
     restart: always
     networks:
       - guac
+    environment:
+      GUACD_LOG_LEVEL: debug
   guac:
-    image: guacamole/guacamole:0.9.13-incubating
+    image: guacamole/guacamole:1.3.0
     restart: always
     ports:
       - "8080:8080"
