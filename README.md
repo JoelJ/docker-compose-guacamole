@@ -1,12 +1,12 @@
-# docker-compose-guacamole 0.9.13
+# docker-compose-guacamole 1.3.0
 
 run
 
 ```bash
-docker-compose up -d
+docker-compose up  --remove-orphans
 ```
 
-Then go to `http://DOCKER_HOST:8080/guacamole/`
+Then go to `http://localhost:8080/guacamole/`
 
 Log in as user: `guacadmin` and password: `guacadmin`.
 
